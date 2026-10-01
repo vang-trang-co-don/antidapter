@@ -170,6 +170,7 @@ Every setting is environment-driven. See `.env.example` for the full list.
 | `ANTIDAPTER_API_KEY` | *(unset)* | Require a bearer token inbound |
 | `ANTIDAPTER_ALLOW_INTERACTIVE_LOGIN` | `true` | Set `false` so requests never block on a browser login |
 | `ANTIDAPTER_UPSTREAM_TIMEOUT` | `300` | Per-request upstream timeout (s) |
+| `ANTIDAPTER_CATALOG_TTL` | `300` | Model-catalog cache window (s); `0` disables |
 | `ANTIDAPTER_MAX_RETRIES` | `3` | Retries for `429`/`5xx` before failing |
 | `ANTIDAPTER_RETRY_BASE_DELAY` / `_MAX_DELAY` | `0.5` / `8` | Exponential backoff bounds (s) |
 | `ANTIDAPTER_MAX_REQUEST_BYTES` | `33554432` | Inbound body cap |

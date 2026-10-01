@@ -285,17 +285,25 @@ class GatewayHandler(BaseHTTPRequestHandler):
             action()
         except DomainException as exc:
             self._send_error(exc)
+        except (BrokenPipeError, ConnectionResetError):
+            # The client hung up before we finished writing. That is a normal
+            # event (a cancelled fetch, a timed-out probe), not a server fault,
+            # and there is nobody left to send a 500 to.
+            logger.info("Client disconnected before the response was written")
         except Exception:
             logger.exception("Unexpected server error")
             self._send_status(500, "Internal Server Error", "internal_error")
 
     def _send_json(self, body: bytes, status: int = 200) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self._set_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            logger.info("Client disconnected while sending a %d response", status)
 
     def _send_error(self, exc: DomainException) -> None:
         status = status_for(exc)

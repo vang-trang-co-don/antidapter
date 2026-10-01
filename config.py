@@ -103,6 +103,7 @@ class UpstreamConfig:
     stream_generate_path: str = "/v1internal:streamGenerateContent?alt=sse"
     fetch_models_path: str = "/v1internal:fetchAvailableModels"
     request_timeout: float = 300.0
+    catalog_ttl: float = 300.0
     max_retries: int = 3
     retry_base_delay: float = 0.5
     retry_max_delay: float = 8.0
@@ -115,6 +116,7 @@ class UpstreamConfig:
             project_id=_env_str(env, "ANTIDAPTER_PROJECT_ID", cls.project_id),
             user_agent=_env_str(env, "ANTIDAPTER_USER_AGENT", cls.user_agent),
             request_timeout=_env_float(env, "ANTIDAPTER_UPSTREAM_TIMEOUT", cls.request_timeout),
+            catalog_ttl=_env_float(env, "ANTIDAPTER_CATALOG_TTL", cls.catalog_ttl),
             max_retries=_env_int(env, "ANTIDAPTER_MAX_RETRIES", cls.max_retries),
             retry_base_delay=_env_float(env, "ANTIDAPTER_RETRY_BASE_DELAY", cls.retry_base_delay),
             retry_max_delay=_env_float(env, "ANTIDAPTER_RETRY_MAX_DELAY", cls.retry_max_delay),

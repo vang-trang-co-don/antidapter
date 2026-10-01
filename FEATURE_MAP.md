@@ -56,6 +56,8 @@ features:
       - "Unknown path -> 404, wrong method -> 405, both as JSON error bodies."
       - "OPTIONS preflight returns 204 with CORS headers."
       - "Internal errors return a generic message; tracebacks go to the log only."
+      - "A client that hangs up mid-response is logged as a normal disconnect,
+         not reported as a 500."
       - "SSE responses are delimited by connection close. Claiming keep-alive
          would deadlock the client against the server, so Connection: close is
          sent deliberately."
@@ -225,6 +227,9 @@ features:
          backoff bounded by ANTIDAPTER_RETRY_MAX_DELAY."
       - "Streaming is retried only until the first chunk is committed; once
          deltas are handed to the caller the stream is never replayed."
+      - "The model catalog is cached for ANTIDAPTER_CATALOG_TTL seconds, so
+         startup probes and model pickers do not each cost a round trip to
+         Google. A failed read is never cached."
       - "All urllib failures are translated to domain exceptions, so callers
          never depend on the transport."
     sse:

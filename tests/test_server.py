@@ -467,6 +467,56 @@ class TestSyncPath(ServerTestCase):
             thread.join(timeout=5)
 
 
+class TestClientDisconnect(ServerTestCase):
+    """Regression: a cancelled fetch was logged and reported as a 500.
+
+    pi's extension probes the catalog with an AbortSignal, so the client can
+    hang up while the gateway is still writing. That is a normal disconnect, not
+    a server fault, and logging a traceback for it is actively misleading.
+    """
+
+    @staticmethod
+    def _handler_with_failing_socket():
+        handler = GatewayHandler.__new__(GatewayHandler)
+        handler.send_response = lambda *a, **k: None
+        handler.send_header = lambda *a, **k: None
+        handler.end_headers = lambda: None
+        handler._set_cors_headers = lambda: None
+        handler.wfile = type(
+            "W",
+            (),
+            {
+                "write": lambda _s, _p: (_ for _ in ()).throw(BrokenPipeError(32, "pipe")),
+                "flush": lambda _s: None,
+            },
+        )()
+        return handler
+
+    def test_send_json_tolerates_a_closed_socket(self):
+        with self.assertLogs("adapters.inbound.http.server", level="INFO") as captured:
+            self._handler_with_failing_socket()._send_json(b"{}", 200)
+        joined = "\n".join(captured.output)
+        self.assertIn("Client disconnected", joined)
+        self.assertNotIn("Traceback", joined)
+
+    def test_guard_does_not_turn_a_disconnect_into_a_500(self):
+        handler = self._handler_with_failing_socket()
+        with self.assertLogs("adapters.inbound.http.server", level="INFO") as captured:
+            handler._guard(lambda: handler._send_json(b"{}", 200))
+        joined = "\n".join(captured.output)
+        self.assertNotIn("Unexpected server error", joined)
+        self.assertNotIn("Traceback", joined)
+        self.assertIn("Client disconnected", joined)
+
+    def test_guard_still_reports_genuine_faults(self):
+        handler = GatewayHandler.__new__(GatewayHandler)
+        statuses = []
+        handler._send_status = lambda status, *_a, **_k: statuses.append(status)
+        with self.assertLogs("adapters.inbound.http.server", level="ERROR"):
+            handler._guard(lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+        self.assertEqual(statuses, [500])
+
+
 class TestRequestLogging(ServerTestCase):
     """Regression: log_message passed 2 values to a 3-placeholder format.
 

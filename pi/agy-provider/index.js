@@ -20,12 +20,12 @@ const PROVIDER_NAME = "Antigravity (Antidapter)";
 const DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1";
 
 /**
- * Bound on the startup catalog probe. The gateway is on loopback, so a healthy
- * setup answers in well under 100ms; this only governs how long a *down*
- * gateway stalls the first render.
+ * Bound on the startup catalog probe. The gateway caches the catalog, so a warm
+ * read is a local millisecond round trip; this only governs how long a *cold*
+ * or *absent* gateway stalls the first render.
  */
-const STARTUP_TIMEOUT_MS = 2_000;
-const REFRESH_TIMEOUT_MS = 5_000;
+const STARTUP_TIMEOUT_MS = 6_000;
+const REFRESH_TIMEOUT_MS = 10_000;
 
 /** Placeholder so the provider exists before the live catalog is fetched. */
 const SEED_MODELS = [

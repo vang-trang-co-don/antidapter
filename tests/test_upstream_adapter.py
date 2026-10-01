@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import unittest
 import urllib.error
 from collections.abc import Callable
@@ -310,8 +311,18 @@ class TestModelMapping(unittest.TestCase):
 
 
 class FakeResponse:
+    """Stands in for an urlopen response.
+
+    Accepts either a list of text lines (SSE streaming) or raw bytes (a buffered
+    JSON body), because the two upstream calls are read differently.
+    """
+
     def __init__(self, lines):
-        self._buffer = io.BytesIO("".join(lines).encode("utf-8"))
+        if isinstance(lines, (bytes, bytearray)):
+            payload = bytes(lines)
+        else:
+            payload = "".join(lines).encode("utf-8")
+        self._buffer = io.BytesIO(payload)
 
     def __enter__(self):
         return self
@@ -321,6 +332,9 @@ class FakeResponse:
 
     def __iter__(self):
         yield from self._buffer
+
+    def read(self) -> bytes:
+        return self._buffer.read()
 
 
 class TestRetryPolicy(unittest.TestCase):
@@ -397,6 +411,84 @@ class TestRetryPolicy(unittest.TestCase):
 
 def _raise(error: Exception):
     raise error
+
+
+class TestCatalogCache(unittest.TestCase):
+    """Regression: every model read cost a live round trip to Google."""
+
+    @staticmethod
+    def _adapter(ttl: float, clock):
+        return GoogleCloudCodeAdapter(
+            UpstreamConfig(base_url="https://mock", project_id="p", max_retries=0,
+                           catalog_ttl=ttl),
+            sleep=lambda _: None,
+            monotonic=clock,
+        )
+
+    def test_repeat_reads_hit_the_upstream_once(self):
+        calls = {"n": 0}
+        payload = {"models": {"m": {"displayName": "M"}}}
+
+        def handler(_attempt):
+            calls["n"] += 1
+            return FakeResponse(json.dumps(payload).encode())
+
+        adapter = self._adapter(ttl=300.0, clock=lambda: 0.0)
+        with patched_urlopen(handler):
+            first = adapter.fetch_models("tok")
+            second = adapter.fetch_models("tok")
+        self.assertEqual(first, second)
+        self.assertEqual(calls["n"], 1, "second read should have been served from cache")
+
+    def test_cache_expires_after_the_ttl(self):
+        calls = {"n": 0}
+        payload = {"models": {"m": {"displayName": "M"}}}
+        now = {"t": 0.0}
+
+        def handler(_attempt):
+            calls["n"] += 1
+            return FakeResponse(json.dumps(payload).encode())
+
+        adapter = self._adapter(ttl=10.0, clock=lambda: now["t"])
+        with patched_urlopen(handler):
+            adapter.fetch_models("tok")
+            now["t"] = 5.0
+            adapter.fetch_models("tok")
+            self.assertEqual(calls["n"], 1, "still inside the TTL")
+            now["t"] = 11.0
+            adapter.fetch_models("tok")
+        self.assertEqual(calls["n"], 2, "TTL elapsed, should re-fetch")
+
+    def test_failed_read_is_not_cached(self):
+        calls = {"n": 0}
+        payload = {"models": {"m": {"displayName": "M"}}}
+
+        def handler(_attempt):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO(b""))
+            return FakeResponse(json.dumps(payload).encode())
+
+        adapter = self._adapter(ttl=300.0, clock=lambda: 0.0)
+        with patched_urlopen(handler):
+            with self.assertRaises(UpstreamServiceError):
+                adapter.fetch_models("tok")
+            self.assertEqual(adapter.fetch_models("tok")[0].id, "m")
+        self.assertEqual(calls["n"], 2, "a failure must not poison the cache")
+
+    def test_zero_ttl_disables_caching(self):
+        calls = {"n": 0}
+        payload = {"models": {"m": {"displayName": "M"}}}
+
+        def handler(_attempt):
+            calls["n"] += 1
+            return FakeResponse(json.dumps(payload).encode())
+
+        adapter = self._adapter(ttl=0.0, clock=lambda: 0.0)
+        with patched_urlopen(handler):
+            adapter.fetch_models("tok")
+            adapter.fetch_models("tok")
+        self.assertEqual(calls["n"], 2)
 
 
 class TestSseEndToEnd(unittest.TestCase):

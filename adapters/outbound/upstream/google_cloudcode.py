@@ -68,6 +68,8 @@ class GoogleCloudCodeAdapter(UpstreamModelPort):
         self._config = config
         self._sleep = sleep
         self._monotonic = monotonic
+        # (fetched_at, models); None until the first successful read.
+        self._catalog_cache: tuple[float, tuple[ModelInfo, ...]] | None = None
 
     def stream_generate(
         self,
@@ -102,6 +104,18 @@ class GoogleCloudCodeAdapter(UpstreamModelPort):
         return self._stream_with_retry(attempt)
 
     def fetch_models(self, token: str) -> tuple[ModelInfo, ...]:
+        """Return the catalog, served from a short-lived cache when warm.
+
+        The catalog changes rarely, but every read costs a round trip to Google
+        and a live request can take seconds. Clients (the pi extension, model
+        pickers) poll this on startup, so a brief cache keeps those reads cheap
+        and fast without pinning a stale list for long.
+        """
+        now = self._monotonic()
+        cached = self._catalog_cache
+        if cached is not None and now - cached[0] < self._config.catalog_ttl:
+            return cached[1]
+
         url = f"{self._config.base_url}{self._config.fetch_models_path}"
 
         def attempt() -> tuple[ModelInfo, ...]:
@@ -112,7 +126,9 @@ class GoogleCloudCodeAdapter(UpstreamModelPort):
                 raw = json.loads(resp.read().decode("utf-8"))
             return self._map_models(raw)
 
-        return self._with_retry(attempt)
+        models = self._with_retry(attempt)
+        self._catalog_cache = (self._monotonic(), models)
+        return models
 
     def _headers(self, token: str) -> dict[str, str]:
         return {
