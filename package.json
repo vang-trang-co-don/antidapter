@@ -1,0 +1,13 @@
+{
+  "name": "antidapter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI-compatible gateway for Google Antigravity models, plus the pi `agy` provider extension",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "pi/agy-provider/index.js"
+    ]
+  }
+}

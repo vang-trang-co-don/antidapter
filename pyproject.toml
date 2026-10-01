@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "antidapter"
+version = "1.0.0"
+description = "OpenAI-compatible gateway for Google Antigravity models, built on ports and adapters"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+antidapter = "main:main"
+
+[tool.setuptools]
+packages = ["core", "adapters"]
+py-modules = ["config", "container", "main"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RET", "ARG", "RUF"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "SIM105",  # contextlib.suppress is not always clearer
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally poke at private attributes and build partial doubles.
+"tests/*" = ["ARG", "SLF", "N802"]
+
+[tool.ruff.lint.flake8-builtins]
+# `format` and `type` shadow builtins in stdlib-mandated signatures.
+builtins-ignorelist = ["format", "type"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+no_implicit_optional = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_return_any = true
+exclude = ["^tests/"]
+
+[[tool.mypy.overrides]]
+module = ["gi", "gi.*"]
+ignore_missing_imports = true

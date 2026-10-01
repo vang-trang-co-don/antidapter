@@ -1,0 +1,10 @@
+{
+  "name": "antidapter-agy-provider",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "pi extension registering the `agy` provider backed by Antidapter",
+  "pi": {
+    "extensions": ["index.js"]
+  }
+}
