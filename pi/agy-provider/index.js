@@ -124,13 +124,20 @@ export default function agyExtension(pi) {
       const models = await fetchCatalog();
       if (models.length > 0) {
         register(pi, models);
-        ctx?.ui?.notify?.(`${PROVIDER_ID}: ${models.length} models from Antidapter`, "info");
+        if (ctx?.model?.provider === PROVIDER_ID) {
+          ctx?.ui?.notify?.(`${PROVIDER_ID}: ${models.length} models from Antidapter`, "info");
+        }
       }
     } catch {
-      ctx?.ui?.notify?.(
-        `${PROVIDER_ID}: could not reach Antidapter at ${baseUrl()} (run: antidapter serve)`,
-        "warning"
-      );
+      // Only speak up when this session actually depends on the gateway.
+      // `agy` is opt-in, so warning on every pi launch would be noise for
+      // everyone who installed the extension and never selected the provider.
+      if (ctx?.model?.provider === PROVIDER_ID) {
+        ctx?.ui?.notify?.(
+          `${PROVIDER_ID}: cannot reach Antidapter at ${baseUrl()} — start it with \`antidapter serve\``,
+          "warning"
+        );
+      }
     }
   });
 }
