@@ -22,6 +22,8 @@ No `agy` binary required. No IDE required. No injected system prompts.
 - **Resilience** — bounded request timeouts, exponential backoff with jitter-free
   retry on `429`/`5xx`, and fail-fast credential handling.
 - **Zero third-party Python dependencies** — standard library only.
+- **pi integration** — a published extension registers a first-class `agy`
+  provider whose model list is read live from the running gateway.
 
 ---
 
@@ -81,11 +83,22 @@ Google rotates models, so a static entry would go stale silently — this one
 always matches `python3 main.py models`.
 
 ```bash
-pi install ./pi/agy-provider     # global; add -l for project-local
+pi install git:github.com/vang-trang-co-don/antidapter
 
 pi --provider agy --model gemini-3.6-flash-low
 pi --provider agy --list-models
 ```
+
+The extension and the gateway ship from the same repository. That is deliberate:
+the extension calls `GET /v1/gateway/models`, so co-versioning them means a new
+extension can never be installed against an old gateway that lacks the endpoint.
+
+`pi` clones into `~/.pi/agent/git/`, so the install is independent of where this
+repository lives. Pin a revision with `pi install git:github.com/vang-trang-co-don/antidapter@v1.0.0`.
+
+> pi's git source syntax supports refs but **not** subdirectories, which is why
+> the repository root carries a `package.json` whose `pi.extensions` points at
+> `pi/agy-provider/index.js`.
 
 If the gateway is not running, the extension falls back to a single seed model
 and warns, rather than failing to load. Configure with `ANTIDAPTER_BASE_URL`

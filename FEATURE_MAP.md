@@ -130,7 +130,12 @@ features:
     degradation: >
       With the gateway down the extension loads with a single seed model and
       warns, bounded by a 2s startup probe, so pi startup is never blocked.
-    install: "pi install ./pi/agy-provider  (add -l for project-local)"
+    install: "pi install git:github.com/vang-trang-co-don/antidapter"
+    packaging: >
+      Published from this repository rather than a separate one, because the
+      extension depends on the gateway's /v1/gateway/models endpoint. pi's git
+      source syntax has no subdirectory support, so the repository root carries
+      a package.json whose pi.extensions field points at the extension.
 
   - id: inbound.anthropic_messages
     status: not_implemented
