@@ -87,7 +87,10 @@ features:
     status: implemented
     module: adapters/inbound/cli/cli_runner.py:CliRunner
     commands:
-      - { name: serve,     args: [--host, --port], note: "authenticates before binding" }
+      - { name: serve,     args: [--host, --port, --idle-timeout, --json-events],
+        note: "preflights auth only when interactive login is allowed; port 0 reports the bound port" }
+      - { name: ensure-auth, args: [--json-events],
+        note: "reports whether credentials are usable; never prompts" }
       - { name: login,     note: "prints the auth URL, then forces a browser authorization" }
       - { name: logout,    note: "clears cached and persisted credentials" }
       - { name: models,    note: "sorted catalog with thinking/tools flags" }
@@ -129,9 +132,24 @@ features:
       The model list is fetched from GET /v1/gateway/models at module load, so
       `pi --list-models` (which exits before session_start fires) is correct,
       and re-probed on session_start to pick up a gateway started after pi.
+    supervision: >
+      The extension spawns the bundled gateway itself on an ephemeral port
+      (--port 0, port reported via the serve_ready event), so no server is ever
+      started by hand. The child is always launched with interactive login
+      DISABLED, which is what guarantees a browser can only ever be opened by
+      /login. The child is killed on session_shutdown, on process exit and on
+      SIGINT/SIGTERM/SIGHUP; the gateway additionally retires after an idle
+      timeout, so a SIGKILLed pi cannot leave an orphan holding a port.
+    auth: >
+      ProviderConfig.oauth supplies login/refreshToken/getApiKey, which is what
+      puts the provider under "Sign in with an account" in /login. login() runs
+      `main.py login --json-events` and relays the auth_url to pi via
+      onAuth(), which renders the URL and opens a browser. pi's credential
+      store keeps only a marker and an expiry; the refresh token stays in the
+      gateway's 0600 credentials file, so there is exactly one copy of it.
     degradation: >
       With the gateway down the extension loads with a single seed model and
-      warns, bounded by a 2s startup probe, so pi startup is never blocked.
+      explains why, so pi startup is never blocked.
     install: "pi install git:github.com/vang-trang-co-don/antidapter"
     packaging: >
       Published from this repository rather than a separate one, because the

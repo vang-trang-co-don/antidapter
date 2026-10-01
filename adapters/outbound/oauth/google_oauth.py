@@ -53,6 +53,7 @@ class GoogleOAuthAdapter(OAuthProviderPort):
         browser_opener: Callable[[str], bool] = webbrowser.open,
         clock: Callable[[], float] = time.monotonic,
         prompter: Callable[[str], None] | None = None,
+        on_auth_url: Callable[[str], None] | None = None,
     ):
         self._config = config
         self._browser_opener = browser_opener
@@ -60,6 +61,9 @@ class GoogleOAuthAdapter(OAuthProviderPort):
         # Injected so the adapter never prints directly: the composition root
         # decides where the URL is shown, and tests can capture it.
         self._prompter = prompter or (lambda message: logger.info("%s", message))
+        # Machine-readable hook for supervisors (the pi extension), which need
+        # the bare URL rather than the human-formatted block.
+        self._on_auth_url = on_auth_url or (lambda _url: None)
 
     def start_interactive_flow(self) -> AuthToken:
         state = secrets.token_urlsafe(32)
@@ -79,6 +83,7 @@ class GoogleOAuthAdapter(OAuthProviderPort):
         logger.info("Waiting for OAuth callback on %s", redirect_uri)
         # Always show the URL: this is the fallback for headless hosts, remote
         # shells and browsers that fail to launch.
+        self._on_auth_url(auth_url)
         self._prompter(_AUTHORIZE_PROMPT.format(url=auth_url))
         opened = False
         try:

@@ -1,5 +1,5 @@
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,16 +9,49 @@ _TRUE = frozenset({"1", "true", "yes", "on"})
 
 
 def load_dotenv(path: Path | None = None) -> None:
-    """Populate os.environ from a .env file without overriding real env vars.
+    """Populate os.environ from .env files without overriding real env vars.
 
     Keeps secrets out of version control while avoiding a third-party
     dependency. Missing or unreadable files are ignored.
+
+    Lookup order; the first file to supply a given key wins, and real
+    environment variables are never replaced:
+
+      1. ``path`` when given
+      2. ``.env`` beside this module (a developer checkout)
+      3. ``~/.config/antidapter/.env`` - the documented location, and the only
+         one present inside a package clone, where ``.env`` does not exist
+         because it is gitignored
     """
-    env_path = path or (Path(__file__).resolve().parent / ".env")
+    if path is not None:
+        # An explicit path is authoritative and exclusive.
+        _apply_dotenv(path)
+        return
+    _load_candidates(
+        [
+            Path(__file__).resolve().parent / ".env",
+            Path(os.path.expanduser("~/.config/antidapter/.env")),
+        ]
+    )
+
+
+def _load_candidates(candidates: Sequence[Path]) -> None:
+    """Merge every candidate, first-wins per key.
+
+    Merging rather than stopping at the first file that contributes anything
+    means a partial developer .env cannot shadow the config-dir file.
+    """
+    for candidate in candidates:
+        _apply_dotenv(candidate)
+
+
+def _apply_dotenv(env_path: Path) -> bool:
+    """Merge one .env file into os.environ. Returns True if it supplied anything."""
     try:
         content = env_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return
+        return False
+    supplied = False
     for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -28,6 +61,8 @@ def load_dotenv(path: Path | None = None) -> None:
         value = value.strip().strip("'\"")
         if key and key not in os.environ:
             os.environ[key] = value
+            supplied = True
+    return supplied
 
 
 def _env_str(env: Mapping[str, str], key: str, default: str | None = None) -> str:

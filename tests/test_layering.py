@@ -154,6 +154,10 @@ class TestCompositionRoot(unittest.TestCase):
         for path in python_files(ROOT):
             if "__pycache__" in path.parts or path.name in ("container.py", "test_layering.py"):
                 continue
+            # Tests legitimately import concrete adapters: verifying that an
+            # adapter honours its port is their whole job.
+            if path.relative_to(ROOT).parts[0] == "tests":
+                continue
             source = path.read_text(encoding="utf-8")
             hits = sum(
                 1

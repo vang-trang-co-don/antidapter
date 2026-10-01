@@ -419,8 +419,7 @@ class TestCatalogCache(unittest.TestCase):
     @staticmethod
     def _adapter(ttl: float, clock):
         return GoogleCloudCodeAdapter(
-            UpstreamConfig(base_url="https://mock", project_id="p", max_retries=0,
-                           catalog_ttl=ttl),
+            UpstreamConfig(base_url="https://mock", project_id="p", max_retries=0, catalog_ttl=ttl),
             sleep=lambda _: None,
             monotonic=clock,
         )

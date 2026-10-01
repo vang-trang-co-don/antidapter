@@ -8,6 +8,7 @@ so adding a second wire protocol touches neither this file nor the domain.
 
 import hmac
 import logging
+import threading
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -88,6 +89,56 @@ ROUTES = (
     Route("GET", "/models", "list_models"),
     Route("POST", "/chat/completions", "chat"),
 )
+
+
+class IdleWatchdog:
+    """Shuts the server down once it has been idle for a while.
+
+    A supervised gateway is meant to live only as long as the process that
+    started it. If that process is SIGKILLed, the child survives and holds a
+    port forever, so an idle timeout is the backstop that prevents orphans from
+    accumulating.
+    """
+
+    def __init__(self, server: ThreadingHTTPServer, timeout: float) -> None:
+        self._server = server
+        self._timeout = timeout
+        self._last_activity = time.monotonic()
+        self._timer: threading.Timer | None = None
+
+    def touch(self) -> None:
+        self._last_activity = time.monotonic()
+
+    def start(self) -> None:
+        if self._timeout <= 0:
+            return
+        self._schedule()
+
+    def stop(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def _schedule(self) -> None:
+        self._timer = threading.Timer(self._timeout, self._check)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _check(self) -> None:
+        idle_for = time.monotonic() - self._last_activity
+        if idle_for >= self._timeout:
+            logger.info("Idle for %.0fs; shutting down", idle_for)
+            threading.Thread(target=self._server.shutdown, daemon=True).start()
+            return
+        self._schedule()
+
+
+class _WatchdogServer(ThreadingHTTPServer):
+    """Threading server that carries the idle watchdog."""
+
+    daemon_threads = True
+
+    watchdog: IdleWatchdog | None = None
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -339,6 +390,7 @@ def create_http_server(
     catalog_use_case: ModelCatalogUseCase,
     config: ServerConfig | None = None,
     on_ready: Callable[[], None] | None = None,
+    idle_timeout: float = 0.0,
 ) -> ThreadingHTTPServer:
     """Build the HTTP server with all dependencies injected.
 
@@ -357,4 +409,10 @@ def create_http_server(
             "on_ready": on_ready or (lambda: None),
         },
     )
-    return ThreadingHTTPServer((host, port), handler_cls)
+    server = _WatchdogServer((host, port), handler_cls)
+    if on_ready is not None:
+        on_ready()
+    if idle_timeout > 0:
+        server.watchdog = IdleWatchdog(server, idle_timeout)
+        server.watchdog.start()
+    return server

@@ -68,6 +68,19 @@ python3 main.py model gemini-3.6-flash-low
 python3 main.py serve --port 8080
 ```
 
+For unsupervised use, `--port 0` binds a free port and reports it, and
+`--idle-timeout <seconds>` makes the server retire when idle. Both are also
+available to supervisors as machine-readable events:
+
+```bash
+python3 main.py serve --port 0 --json-events
+# {"event": "serve_ready", "host": "127.0.0.1", "port": 54321,
+#  "base_url": "http://127.0.0.1:54321/v1", "health_url": "http://127.0.0.1:54321/health"}
+
+python3 main.py login --json-events        # emits the authorization URL for a UI to relay
+python3 main.py ensure-auth --json-events  # exit 0 if credentials are usable, never prompts
+```
+
 ---
 
 ## Connecting Pi (`pi`)

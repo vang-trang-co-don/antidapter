@@ -6,6 +6,13 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
 
+from adapters.inbound.cli.events import (
+    ERROR,
+    STATUS,
+    SUCCESS,
+    EventSink,
+    null_sink,
+)
 from config import AppConfig
 from core.domain.exceptions import DomainException
 from core.ports.inbound import (
@@ -17,7 +24,16 @@ from core.ports.inbound import (
 
 logger = logging.getLogger(__name__)
 
-COMMANDS = ("serve", "login", "logout", "models", "quota", "model", "pi-config")
+COMMANDS = (
+    "serve",
+    "login",
+    "logout",
+    "models",
+    "quota",
+    "model",
+    "pi-config",
+    "ensure-auth",
+)
 
 
 class CliRunner:
@@ -34,22 +50,28 @@ class CliRunner:
         model_catalog_use_case: ModelCatalogUseCase,
         chat_use_case: ChatUseCase,
         translator: ProtocolTranslatorPort,
-        serve: Callable[[str, int], None] | None = None,
+        probe_auth: AuthUseCase | None = None,
+        serve: Callable[[str, int, float], None] | None = None,
         out: TextIO | None = None,
+        events: EventSink | None = None,
     ):
         self._config = config
         self._auth = auth_use_case
         self._catalog = model_catalog_use_case
         self._chat = chat_use_case
         self._translator = translator
+        # Never-interactive credentials, for status probes.
+        self._probe_auth = probe_auth or auth_use_case
         self._serve = serve
         self._out = out or sys.stdout
+        self._events = events or null_sink()
 
     def run(self, argv: Sequence[str]) -> int:
         args = self._build_parser().parse_args(list(argv))
         try:
             return self._dispatch(args)
         except DomainException as exc:
+            self._emit(ERROR, message=exc.message)
             self._print(f"error: {exc.message}")
             return 2
         except KeyboardInterrupt:
@@ -79,25 +101,47 @@ class CliRunner:
             default=None,
             help="pi-config: path to pi's models.json (default ~/.pi/agent/models.json)",
         )
-        parser.add_argument("--host", default=self._config.server.host)
-        parser.add_argument("--port", type=int, default=self._config.server.port)
+        parser.add_argument("--host", default=self._config.server.host, help="serve: bind address")
+        parser.add_argument(
+            "--port",
+            type=int,
+            default=self._config.server.port,
+            help="serve: bind port; 0 picks a free port and reports it",
+        )
+        parser.add_argument(
+            "--json-events",
+            action="store_true",
+            help="Emit newline-delimited JSON events on stdout for supervisors",
+        )
+        parser.add_argument(
+            "--idle-timeout",
+            type=float,
+            default=0.0,
+            help="serve: shut down after this many idle seconds (0 disables)",
+        )
         parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
         return parser
 
     def _dispatch(self, args: argparse.Namespace) -> int:
         handlers = {
-            "serve": lambda: self._handle_serve(args.host, args.port),
+            "serve": lambda: self._handle_serve(args.host, args.port, args.idle_timeout),
             "login": self._handle_login,
             "logout": self._handle_logout,
             "models": self._handle_models,
             "quota": self._handle_quota,
             "model": lambda: self._handle_model(args.model_id),
             "pi-config": lambda: self._handle_pi_config(args),
+            "ensure-auth": self._handle_ensure_auth,
         }
         return handlers[args.command]()
 
     def _handle_login(self) -> int:
-        self._auth.login_interactive()
+        try:
+            self._auth.login_interactive()
+        except DomainException as exc:
+            self._emit(ERROR, message=exc.message)
+            raise
+        self._emit(SUCCESS, message="logged in")
         self._print("[+] Logged in successfully.")
         return 0
 
@@ -188,15 +232,42 @@ class CliRunner:
         )
         return 0
 
-    def _handle_serve(self, host: str, port: int) -> int:
+    def _handle_serve(self, host: str, port: int, idle_timeout: float = 0.0) -> int:
         # Authenticate before binding, so a missing credential fails fast at the
         # terminal instead of on the first request.
-        self._auth.ensure_authenticated()
+        #
+        # Only when interactive login is actually possible. A supervised server
+        # is started with interactive login disabled precisely so it can never
+        # open a browser; preflighting there could only ever fail, and would
+        # block startup on a login nobody asked for.
+        if self._config.server.allow_interactive_login:
+            self._auth.ensure_authenticated()
         if self._serve is None:
             self._print("error: no server factory configured")
             return 2
-        self._serve(host, port)
+        self._serve(host, port, idle_timeout)
         return 0
+
+    def _handle_ensure_auth(self) -> int:
+        """Report whether a usable token exists, without ever prompting.
+
+        Used by supervisors to decide whether to send the user to /login, and to
+        refresh an expiry they track. Never opens a browser.
+        """
+        try:
+            self._probe_auth.ensure_authenticated()
+        except DomainException as exc:
+            self._emit(
+                STATUS,
+                authenticated=False,
+                message=exc.message,
+            )
+            return 1
+        self._emit(STATUS, authenticated=True, message="credentials are valid")
+        return 0
+
+    def _emit(self, event: str, **fields: object) -> None:
+        self._events.emit(event, **fields)
 
     def _print(self, message: str) -> None:
         print(message, file=self._out)

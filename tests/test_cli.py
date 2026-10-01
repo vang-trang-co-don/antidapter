@@ -160,20 +160,20 @@ class TestServe(unittest.TestCase):
     def test_authenticates_before_binding(self):
         started = {}
 
-        def serve(host, port):
-            started["args"] = (host, port)
+        def serve(host, port, idle_timeout=0.0):
+            started["args"] = (host, port, idle_timeout)
 
         auth = FakeAuth()
         runner, _out = build(auth=auth, serve=serve)
         self.assertEqual(runner.run(["serve", "--port", "9999"]), 0)
-        self.assertEqual(started["args"], ("127.0.0.1", 9999))
+        self.assertEqual(started["args"], ("127.0.0.1", 9999, 0.0))
         self.assertEqual(auth.authenticated, 1)
 
     def test_does_not_serve_when_auth_fails(self):
         called = []
         runner, _out = build(
             auth=FakeAuth(error=AuthenticationError("expired")),
-            serve=lambda h, p: called.append((h, p)),
+            serve=lambda h, p, _idle=0.0: called.append((h, p)),
         )
         self.assertEqual(runner.run(["serve"]), 2)
         self.assertEqual(called, [], "server started despite failed auth")
