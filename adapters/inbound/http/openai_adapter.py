@@ -369,11 +369,12 @@ class OpenAIProtocolTranslator(ProtocolTranslatorPort):
             if not isinstance(entry, dict) or entry.get("type") != "function":
                 raise ValidationError(f"tools[{position}] must be a function definition")
             function = entry.get("function") or {}
+            name = str(function.get("name") or "")
             parameters = function.get("parameters")
             yield ToolDefinition(
-                name=str(function.get("name") or ""),
+                name=name,
                 description=str(function.get("description") or ""),
-                parameters=parameters if isinstance(parameters, dict) else None,
+                parameters=normalize_tool_schema(parameters, tool=name or f"tools[{position}]"),
             )
 
 
@@ -383,6 +384,65 @@ def _usage_payload(usage: TokenUsage) -> dict[str, int]:
         "completion_tokens": usage.completion_tokens,
         "total_tokens": usage.total_tokens,
     }
+
+
+# Keywords that changed meaning or location between JSON Schema drafts. Clients
+# send a variety of dialects (Anthropic-style `input_schema` in particular) and
+# the upstream requires draft 2020-12, so these are rewritten rather than
+# forwarded and rejected. `definitions` became `$defs`; the boolean forms of
+# `exclusiveMinimum`/`exclusiveMaximum` became numeric ones.
+_BOOLEAN_EXCLUSIVE = ("exclusiveMinimum", "exclusiveMaximum")
+
+
+def normalize_tool_schema(schema: Any, tool: str) -> dict[str, Any] | None:
+    """Coerce a client tool schema into draft 2020-12, or reject it clearly.
+
+    Forwarding a schema the upstream will not accept turns into an opaque 502
+    that the client retries several times, which is a far worse experience than
+    a 400 that names the offending tool.
+    """
+    if schema is None:
+        return None
+    if not isinstance(schema, dict):
+        raise ValidationError(f"tool '{tool}': parameters must be a JSON object")
+
+    normalized: dict[str, Any] = _rewrite(schema, tool)
+
+    # The root of a tool schema describes an argument object. Clients that omit
+    # it (or send something else) are rejected upstream, so state it here.
+    if "type" not in normalized:
+        normalized["type"] = "object"
+    if "properties" in normalized and not isinstance(normalized["properties"], dict):
+        raise ValidationError(f"tool '{tool}': 'properties' must be a JSON object")
+
+    normalized.pop("$schema", None)
+    return normalized
+
+
+def _rewrite(node: Any, tool: str) -> Any:
+    if isinstance(node, list):
+        return [_rewrite(item, tool) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    result: dict[str, Any] = {}
+    for key, value in node.items():
+        # draft-04 tuple form: "items": [a, b] -> draft 2020-12 "prefixItems".
+        if key == "items" and isinstance(value, list):
+            result["prefixItems"] = [_rewrite(item, tool) for item in value]
+            continue
+        if key in _BOOLEAN_EXCLUSIVE and isinstance(value, bool):
+            # draft-04 booleans modified "minimum"/"maximum"; in 2020-12 they
+            # are standalone numbers. Without the sibling value the constraint
+            # cannot be expressed, so drop it rather than emit a wrong bound.
+            sibling = "minimum" if key == "exclusiveMinimum" else "maximum"
+            if isinstance(node.get(sibling), (int, float)):
+                continue
+            result[key] = value
+            continue
+        target = "$defs" if key == "definitions" else key
+        result[target] = _rewrite(value, tool)
+    return result
 
 
 def _encode(payload: dict[str, Any]) -> bytes:

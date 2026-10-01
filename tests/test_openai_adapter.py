@@ -265,6 +265,83 @@ class TestToolDefinitionParsing(unittest.TestCase):
             )
 
 
+class TestToolSchemaNormalization(unittest.TestCase):
+    """The upstream requires JSON Schema draft 2020-12 and rejects anything else.
+
+    Forwarding a client's dialect unchanged produced an opaque 502 that the
+    client retried repeatedly, so schemas are rewritten at the inbound edge.
+    """
+
+    def _params(self, parameters):
+        request = parse(
+            {
+                "model": "m",
+                "messages": [{"role": "user", "content": "x"}],
+                "tools": [
+                    {"type": "function", "function": {"name": "f", "parameters": parameters}}
+                ],
+            }
+        )
+        return request.tools[0].parameters
+
+    def test_missing_root_type_is_supplied(self):
+        """Anthropic-style input_schema omits it, and the upstream rejects that."""
+        self.assertEqual(self._params({"properties": {"a": {"type": "string"}}})["type"], "object")
+
+    def test_existing_root_type_is_preserved(self):
+        self.assertEqual(self._params({"type": "object"})["type"], "object")
+
+    def test_schema_key_is_stripped(self):
+        self.assertNotIn(
+            "$schema", self._params({"$schema": "http://json-schema.org/draft-07/schema#"})
+        )
+
+    def test_definitions_is_renamed_to_defs(self):
+        schema = self._params({"definitions": {"A": {"type": "string"}}})
+        self.assertIn("$defs", schema)
+        self.assertNotIn("definitions", schema)
+
+    def test_draft4_boolean_exclusives_are_dropped(self):
+        schema = self._params({"properties": {"n": {"minimum": 1, "exclusiveMinimum": True}}})
+        self.assertNotIn("exclusiveMinimum", schema["properties"]["n"])
+        self.assertEqual(schema["properties"]["n"]["minimum"], 1)
+
+    def test_numeric_exclusives_survive(self):
+        schema = self._params({"properties": {"n": {"exclusiveMinimum": 3}}})
+        self.assertEqual(schema["properties"]["n"]["exclusiveMinimum"], 3)
+
+    def test_tuple_items_become_prefix_items(self):
+        schema = self._params({"properties": {"t": {"items": [{"type": "string"}]}}})
+        self.assertIn("prefixItems", schema["properties"]["t"])
+        self.assertNotIn("items", schema["properties"]["t"])
+
+    def test_nested_schemas_are_rewritten_recursively(self):
+        schema = self._params(
+            {"properties": {"o": {"type": "object", "definitions": {"X": {"type": "string"}}}}}
+        )
+        self.assertIn("$defs", schema["properties"]["o"])
+
+    def test_none_schema_stays_none(self):
+        request = parse(
+            {
+                "model": "m",
+                "messages": [{"role": "user", "content": "x"}],
+                "tools": [{"type": "function", "function": {"name": "f"}}],
+            }
+        )
+        self.assertIsNone(request.tools[0].parameters)
+
+    def test_non_object_schema_is_a_400_naming_the_tool(self):
+        with self.assertRaises(ValidationError) as ctx:
+            self._params(["not", "a", "schema"])
+        self.assertIn("'f'", ctx.exception.message)
+
+    def test_non_object_properties_is_rejected(self):
+        with self.assertRaises(ValidationError) as ctx:
+            self._params({"properties": "nope"})
+        self.assertIn("'f'", ctx.exception.message)
+
+
 class TestSerialization(unittest.TestCase):
     def setUp(self):
         self.translator = OpenAIProtocolTranslator()

@@ -64,6 +64,20 @@ class UpstreamTimeoutError(UpstreamServiceError):
         self.timeout = timeout
 
 
+class UpstreamRejectedError(UpstreamServiceError):
+    """The upstream refused the request because the payload was invalid.
+
+    A 4xx from upstream is the *caller's* fault, not ours: a malformed tool
+    schema, an unknown field, an oversized request. Reporting it as 502 would
+    both mislead the client and invite pointless retries, so the upstream status
+    is surfaced instead.
+    """
+
+    def __init__(self, message: str, upstream_status: int, details: str = ""):
+        super().__init__(message, status_code=upstream_status, details=details, retryable=False)
+        self.upstream_status = upstream_status
+
+
 class ModelNotFoundError(DomainException):
     """Raised when requested model does not exist."""
 

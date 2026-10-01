@@ -155,6 +155,22 @@ provider.
 
 ---
 
+## Known limitation: tool schemas
+
+Google's upstream requires JSON Schema **draft 2020-12** and rejects some
+constructs outright — `anyOf` in a property position is the common one. The
+gateway rewrites what it safely can (`definitions` -> `$defs`, draft-04 boolean
+exclusives, tuple-form `items`) and supplies a missing root `type: object`,
+which is what Anthropic-style `input_schema` omits.
+
+It does **not** rewrite schema logic it cannot prove equivalent. When the
+upstream rejects a payload, the gateway reports the upstream's own 4xx rather
+than a 502, so a bad tool schema surfaces immediately as a 400 naming the
+problem instead of a 502 the client retries several times. Note that models
+differ: Gemini tolerates schemas the Claude endpoint rejects, so a third-party
+extension's tool can work on one model and not another. Disabling that
+extension for the affected model (`pi config`) is the workaround.
+
 ## Security
 
 The gateway holds a Google access token on your behalf, so treat the port as

@@ -26,6 +26,7 @@ from core.domain.entities import (
 )
 from core.domain.exceptions import (
     DomainException,
+    UpstreamRejectedError,
     UpstreamServiceError,
     UpstreamTimeoutError,
 )
@@ -81,6 +82,11 @@ class GoogleCloudCodeAdapter(UpstreamModelPort):
         body = json.dumps(payload).encode("utf-8")
 
         def attempt() -> Iterator[StreamDelta]:
+            import os as _os
+
+            if _os.environ.get("ANTIDAPTER_DEBUG_TOOLS"):
+                with open("/tmp/opencode/tools_sent.json", "w") as _f:
+                    json.dump(payload.get("request", {}).get("tools"), _f, indent=1)
             req = urllib.request.Request(
                 url,
                 data=body,
@@ -155,11 +161,23 @@ class GoogleCloudCodeAdapter(UpstreamModelPort):
                 body = exc.read().decode("utf-8", errors="replace")
             with contextlib.suppress(Exception):
                 exc.close()
-            logger.error("Upstream returned HTTP %s: %s", exc.code, _summarize(body))
+            detail = _summarize(body)
+            logger.error("Upstream returned HTTP %s: %s", exc.code, detail)
+            if 400 <= exc.code < 500 and exc.code not in RETRYABLE_STATUS:
+                # Most 4xx mean the caller's payload is wrong, which is not a
+                # gateway fault. Surface them as-is so the client gets an
+                # actionable message instead of a 502 it will dutifully retry.
+                # The retryable 4xx (408/425/429) are rate limits and
+                # timeouts, not client mistakes, so they keep the retry path.
+                raise UpstreamRejectedError(
+                    _rejection_message(exc.code, detail),
+                    upstream_status=exc.code,
+                    details=detail,
+                ) from exc
             raise UpstreamServiceError(
                 f"Upstream returned HTTP {exc.code}",
                 status_code=502,
-                details=_summarize(body),
+                details=detail,
                 retryable=exc.code in RETRYABLE_STATUS,
             ) from exc
         except urllib.error.URLError as exc:
@@ -427,6 +445,26 @@ class GoogleCloudCodeAdapter(UpstreamModelPort):
 def _summarize(body: str, limit: int = 300) -> str:
     flattened = " ".join(body.split())
     return flattened[:limit] + ("..." if len(flattened) > limit else "")
+
+
+def _rejection_message(status: int, detail: str) -> str:
+    """Pull the upstream's own reason out of its envelope, when present."""
+    reason = detail
+    try:
+        parsed = json.loads(detail)
+        message = parsed.get("error", {}).get("message")
+        if isinstance(message, str):
+            reason = message
+            # The upstream double-encodes the reason as a JSON string.
+            try:
+                inner = json.loads(message)
+                if isinstance(inner, dict) and isinstance(inner.get("error"), dict):
+                    reason = inner["error"].get("message") or message
+            except json.JSONDecodeError:
+                pass
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return f"Upstream rejected the request (HTTP {status}): {_summarize(reason, 400)}"
 
 
 def _safe_json_object(arguments: str) -> dict[str, Any]:

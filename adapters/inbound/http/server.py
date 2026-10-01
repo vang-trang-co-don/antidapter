@@ -23,6 +23,7 @@ from core.domain.exceptions import (
     DomainException,
     ModelNotFoundError,
     TokenExpiredError,
+    UpstreamRejectedError,
     UpstreamServiceError,
     ValidationError,
 )
@@ -44,6 +45,8 @@ STATUS_BY_ERROR: tuple[tuple[type, int], ...] = (
     (AuthenticationError, 401),
     (TokenExpiredError, 401),
     (ModelNotFoundError, 404),
+    # The upstream said the payload was bad; so say so to our caller too.
+    (UpstreamRejectedError, 400),
     (ConfigurationError, 500),
     (UpstreamServiceError, 502),
 )
